@@ -209,9 +209,7 @@ def _blaxel_base_url(model: str) -> str:
             return explicit_chat_url[: -len(suffix)]
         return explicit_chat_url.rstrip("/")
 
-    workspace = os.getenv("BLAXEL_WORKSPACE", "").strip()
-    if not workspace:
-        raise RuntimeError("BLAXEL_WORKSPACE is not set.")
+    workspace = os.getenv("BLAXEL_WORKSPACE", "vasanthfeb13").strip()
     base_url = os.getenv("BLAXEL_BASE_URL", "https://run.blaxel.ai").strip().rstrip("/")
     return f"{base_url}/{workspace}/models/{model}/v1"
 

@@ -22,6 +22,11 @@ from typing import Any
 from openai import OpenAI
 
 
+DEFAULT_BLAXEL_WORKSPACE = "vasanthfeb13"
+DEFAULT_BLAXEL_MODEL = "sandbox-openai"
+DEFAULT_CEREBRAS_MODEL = "llama3.1-8b"
+
+
 def _load_components() -> tuple[type, type]:
     for prefix in ("soc_triage_env", "envs.soc_triage_env"):
         try:
@@ -66,6 +71,57 @@ def _build_client(api_base_url: str, hf_token: str) -> OpenAI:
     if default_headers:
         return OpenAI(api_key=_normalize_token(hf_token), base_url=api_base_url, default_headers=default_headers)
     return OpenAI(api_key=_normalize_token(hf_token), base_url=api_base_url)
+
+
+def _blaxel_base_url(model_name: str) -> str:
+    explicit_api_base = os.getenv("BLAXEL_API_BASE_URL", "").strip()
+    if explicit_api_base:
+        return explicit_api_base.rstrip("/")
+
+    explicit_chat_url = os.getenv("BLAXEL_CHAT_URL", "").strip()
+    if explicit_chat_url:
+        suffix = "/chat/completions"
+        if explicit_chat_url.endswith(suffix):
+            return explicit_chat_url[: -len(suffix)]
+        return explicit_chat_url.rstrip("/")
+
+    workspace = os.getenv("BLAXEL_WORKSPACE", DEFAULT_BLAXEL_WORKSPACE).strip()
+    base_url = os.getenv("BLAXEL_BASE_URL", "https://run.blaxel.ai").strip().rstrip("/")
+    return f"{base_url}/{workspace}/models/{model_name}/v1"
+
+
+def _resolve_runtime_config() -> InferenceConfig:
+    # Highest priority: explicit submission variables.
+    api_base_url = os.getenv("API_BASE_URL", "").strip()
+    model_name = os.getenv("MODEL_NAME", "").strip()
+    hf_token = os.getenv("HF_TOKEN", "").strip()
+    if api_base_url and model_name and hf_token:
+        return InferenceConfig(api_base_url, model_name, hf_token, episodes_per_task=1, max_minutes=20)
+
+    provider = os.getenv("AI_PROVIDER", "blaxel").strip().lower()
+    blaxel_key = os.getenv("BLAXEL_AUTHORIZATION", "").strip()
+    cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
+
+    # Auto-path: if Blaxel key exists (or provider prefers it), derive base/model defaults.
+    if blaxel_key or provider == "blaxel":
+        resolved_model = model_name or os.getenv("BLAXEL_MODEL", DEFAULT_BLAXEL_MODEL).strip()
+        resolved_base = api_base_url or _blaxel_base_url(resolved_model)
+        resolved_token = hf_token or blaxel_key
+        if resolved_base and resolved_model and resolved_token:
+            return InferenceConfig(resolved_base, resolved_model, resolved_token, episodes_per_task=1, max_minutes=20)
+
+    # Auto-path: Cerebras with stable API defaults.
+    if cerebras_key or provider == "cerebras":
+        resolved_model = model_name or os.getenv("CEREBRAS_MODEL", DEFAULT_CEREBRAS_MODEL).strip()
+        resolved_base = api_base_url or os.getenv("CEREBRAS_API_BASE_URL", "https://api.cerebras.ai/v1").strip()
+        resolved_token = hf_token or cerebras_key
+        if resolved_base and resolved_model and resolved_token:
+            return InferenceConfig(resolved_base, resolved_model, resolved_token, episodes_per_task=1, max_minutes=20)
+
+    raise RuntimeError(
+        "Missing runtime configuration. Set either API_BASE_URL/MODEL_NAME/HF_TOKEN, "
+        "or provider keys (BLAXEL_AUTHORIZATION or CEREBRAS_API_KEY)."
+    )
 
 
 def _prompt_for_observation(obs: Any) -> str:
@@ -178,25 +234,12 @@ def _run_task(task_id: str, episodes: int, client: OpenAI, model_name: str, max_
 
 
 def run_inference_sync(episodes_per_task: int = 1, max_minutes: int = 20) -> dict[str, float]:
-    api_base_url = os.getenv("API_BASE_URL", "").strip()
-    model_name = os.getenv("MODEL_NAME", "").strip()
-    hf_token = os.getenv("HF_TOKEN", "").strip()
-
-    missing: list[str] = []
-    if not api_base_url:
-        missing.append("API_BASE_URL")
-    if not model_name:
-        missing.append("MODEL_NAME")
-    if not hf_token:
-        missing.append("HF_TOKEN")
-    if missing:
-        raise RuntimeError("Missing required environment variable(s): " + ", ".join(missing))
-
-    client = _build_client(api_base_url=api_base_url, hf_token=hf_token)
+    config = _resolve_runtime_config()
+    client = _build_client(api_base_url=config.api_base_url, hf_token=config.hf_token)
     max_seconds = max(60, max_minutes * 60)
 
     return {
-        task_id: _run_task(task_id, episodes_per_task, client, model_name, max_seconds)
+        task_id: _run_task(task_id, episodes_per_task, client, config.model_name, max_seconds)
         for task_id in ["easy", "medium", "hard"]
     }
 
