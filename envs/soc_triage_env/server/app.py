@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from soc_triage_env.models import TriageAction
@@ -55,7 +55,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/reset")
-def reset(payload: ResetRequest) -> dict[str, Any]:
+def reset(payload: ResetRequest = Body(default=ResetRequest())) -> dict[str, Any]:
     try:
         obs = env.reset(task_id=payload.task_id)
     except ValueError as exc:
@@ -114,7 +114,7 @@ def grader(payload: GraderRequest) -> dict[str, Any]:
 
 
 @app.post("/baseline")
-def baseline(payload: BaselineRequest) -> dict[str, Any]:
+def baseline(payload: BaselineRequest = Body(default=BaselineRequest())) -> dict[str, Any]:
     """Run provider baseline if keys are set, else return heuristic fallback."""
     provider = payload.provider.lower().strip()
     if provider not in {"openai", "cerebras", "blaxel"}:
