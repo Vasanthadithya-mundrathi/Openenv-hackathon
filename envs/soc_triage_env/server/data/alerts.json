@@ -1,0 +1,203 @@
+{
+  "easy": [
+    {
+      "alert": {
+        "alert_id": "EASY-001",
+        "timestamp": "2026-03-27T10:15:00Z",
+        "source_ip": "192.168.1.45",
+        "destination_ip": "10.0.0.1",
+        "event_type": "FAILED_LOGIN",
+        "raw_log": "Failed SSH password attempts for root from 192.168.1.45"
+      },
+      "ground_truth": {
+        "severity": "medium",
+        "recommended_action": "investigate"
+      }
+    },
+    {
+      "alert": {
+        "alert_id": "EASY-002",
+        "timestamp": "2026-03-27T03:00:00Z",
+        "source_ip": "192.168.1.50",
+        "destination_ip": "45.33.32.156",
+        "event_type": "OUTBOUND_C2",
+        "raw_log": "Repeated beaconing every 60 seconds to known C2 endpoint"
+      },
+      "ground_truth": {
+        "severity": "critical",
+        "recommended_action": "escalate"
+      }
+    },
+    {
+      "alert": {
+        "alert_id": "EASY-003",
+        "timestamp": "2026-03-27T09:00:00Z",
+        "source_ip": "192.168.2.20",
+        "destination_ip": "192.168.2.1",
+        "event_type": "ARP_REQUEST",
+        "raw_log": "Normal ARP request in internal subnet"
+      },
+      "ground_truth": {
+        "severity": "benign",
+        "recommended_action": "ignore"
+      }
+    }
+  ],
+  "medium": [
+    {
+      "alert": {
+        "alerts": [
+          {
+            "alert_id": "MED-A",
+            "event_type": "FAILED_LOGIN",
+            "source_ip": "10.0.0.5",
+            "raw_log": "3 failed SSH attempts in 10 seconds"
+          },
+          {
+            "alert_id": "MED-B",
+            "event_type": "DNS_LOOKUP",
+            "source_ip": "10.0.0.10",
+            "raw_log": "Normal DNS query to github.com"
+          },
+          {
+            "alert_id": "MED-C",
+            "event_type": "RANSOMWARE_INDICATOR",
+            "source_ip": "10.0.0.7",
+            "raw_log": "Mass file encryption with suspicious extension across host"
+          },
+          {
+            "alert_id": "MED-D",
+            "event_type": "PRIVILEGE_ESCALATION",
+            "source_ip": "10.0.0.3",
+            "raw_log": "Non-admin user attempted sudo elevation"
+          },
+          {
+            "alert_id": "MED-E",
+            "event_type": "OUTBOUND_DATA",
+            "source_ip": "10.0.0.8",
+            "raw_log": "Large outbound transfer to unknown external IP"
+          }
+        ]
+      },
+      "ground_truth": {
+        "ranking": ["MED-C", "MED-E", "MED-D", "MED-A", "MED-B"]
+      }
+    }
+  ],
+  "hard": [
+    {
+      "alert": {
+        "events": [
+          {
+            "alert_id": "H-01",
+            "timestamp": "T+0min",
+            "event_type": "NMAP_SCAN",
+            "source_ip": "185.220.0.1",
+            "raw_log": "Stealth SYN scan on subnet"
+          },
+          {
+            "alert_id": "H-02",
+            "timestamp": "T+1min",
+            "event_type": "DNS_LOOKUP",
+            "source_ip": "192.168.1.22",
+            "raw_log": "Normal DNS query to updates endpoint"
+          },
+          {
+            "alert_id": "H-03",
+            "timestamp": "T+2min",
+            "event_type": "EXPLOIT_ATTEMPT",
+            "source_ip": "185.220.0.1",
+            "raw_log": "Suspicious exploit payload detected in HTTP header"
+          },
+          {
+            "alert_id": "H-04",
+            "timestamp": "T+2min",
+            "event_type": "ARP_REQUEST",
+            "source_ip": "192.168.1.9",
+            "raw_log": "Normal ARP request from printer"
+          },
+          {
+            "alert_id": "H-05",
+            "timestamp": "T+3min",
+            "event_type": "SHELL_SPAWN",
+            "source_ip": "192.168.1.15",
+            "raw_log": "Reverse shell process spawned on server host"
+          },
+          {
+            "alert_id": "H-06",
+            "timestamp": "T+3min",
+            "event_type": "USER_LOGIN",
+            "source_ip": "192.168.1.20",
+            "raw_log": "Normal user login event"
+          },
+          {
+            "alert_id": "H-07",
+            "timestamp": "T+5min",
+            "event_type": "LATERAL_MOVEMENT",
+            "source_ip": "192.168.1.15",
+            "raw_log": "Credential reuse and remote execution to peer host"
+          },
+          {
+            "alert_id": "H-08",
+            "timestamp": "T+5min",
+            "event_type": "BANDWIDTH_SPIKE",
+            "source_ip": "192.168.1.30",
+            "raw_log": "Expected backup traffic to NAS"
+          },
+          {
+            "alert_id": "H-09",
+            "timestamp": "T+7min",
+            "event_type": "C2_BEACON",
+            "source_ip": "192.168.1.15",
+            "raw_log": "Beaconing pattern every 30 seconds to external endpoint"
+          },
+          {
+            "alert_id": "H-10",
+            "timestamp": "T+7min",
+            "event_type": "DNS_LOOKUP",
+            "source_ip": "192.168.1.44",
+            "raw_log": "Normal query to collaboration API"
+          },
+          {
+            "alert_id": "H-11",
+            "timestamp": "T+9min",
+            "event_type": "DATA_EXFIL",
+            "source_ip": "192.168.1.15",
+            "raw_log": "Large encrypted transfer to unknown external host"
+          },
+          {
+            "alert_id": "H-12",
+            "timestamp": "T+9min",
+            "event_type": "PRINT_JOB",
+            "source_ip": "192.168.1.53",
+            "raw_log": "Normal print queue event"
+          },
+          {
+            "alert_id": "H-13",
+            "timestamp": "T+10min",
+            "event_type": "FAILED_LOGIN",
+            "source_ip": "192.168.1.12",
+            "raw_log": "Two failed logins likely typo pattern"
+          },
+          {
+            "alert_id": "H-14",
+            "timestamp": "T+10min",
+            "event_type": "DNS_QUERY",
+            "source_ip": "192.168.1.17",
+            "raw_log": "Normal DNS request"
+          },
+          {
+            "alert_id": "H-15",
+            "timestamp": "T+10min",
+            "event_type": "FIREWALL_RULE_CHANGE",
+            "source_ip": "192.168.1.1",
+            "raw_log": "Firewall rule removed by system account"
+          }
+        ]
+      },
+      "ground_truth": {
+        "kill_chain": ["H-01", "H-03", "H-05", "H-07", "H-11"]
+      }
+    }
+  ]
+}

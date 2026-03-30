@@ -1,0 +1,12 @@
+name: soc_triage_env
+version: "0.1.0"
+description: "Cybersecurity SOC analyst triage environment for AI agent evaluation"
+action: TriageAction
+observation: TriageObservation
+endpoints:
+  reset: /reset
+  step: /step
+  state: /state
+  tasks: /tasks
+  grader: /grader
+  baseline: /baseline
