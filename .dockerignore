@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.tmp
+*.swp
+.env
+.env.*
+.envrc
+*.egg-info/
+envs/soc_triage_env/build/
+envs/soc_triage_env/dist/
+envs/soc_triage_env/.pytest_cache/
