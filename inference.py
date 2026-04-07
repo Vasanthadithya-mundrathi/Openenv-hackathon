@@ -26,6 +26,12 @@ DEFAULT_BLAXEL_WORKSPACE = "vasanthfeb13"
 DEFAULT_BLAXEL_MODEL = "sandbox-openai"
 DEFAULT_CEREBRAS_MODEL = "llama3.1-8b"
 
+# Submission-style environment variables.
+API_BASE_URL = os.getenv("API_BASE_URL", "https://vasanthfeb13-soc-triage-env.hf.space")
+MODEL_NAME = os.getenv("MODEL_NAME", "sandbox-openai")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
 
 def _load_components() -> tuple[type, type]:
     for prefix in ("soc_triage_env", "envs.soc_triage_env"):
@@ -92,9 +98,9 @@ def _blaxel_base_url(model_name: str) -> str:
 
 def _resolve_runtime_config() -> InferenceConfig:
     # Highest priority: explicit submission variables.
-    api_base_url = os.getenv("API_BASE_URL", "").strip()
-    model_name = os.getenv("MODEL_NAME", "").strip()
-    hf_token = os.getenv("HF_TOKEN", "").strip()
+    api_base_url = (API_BASE_URL or "").strip()
+    model_name = (MODEL_NAME or "").strip()
+    hf_token = (HF_TOKEN or "").strip()
     if api_base_url and model_name and hf_token:
         return InferenceConfig(api_base_url, model_name, hf_token, episodes_per_task=1, max_minutes=20)
 
@@ -236,6 +242,13 @@ def _run_task(task_id: str, episodes: int, client: OpenAI | None, model_name: st
     return round(total / episodes, 4)
 
 
+def _run_heuristic_scores(episodes_per_task: int, max_seconds: int) -> dict[str, float]:
+    return {
+        task_id: _run_task(task_id, episodes_per_task, None, "", max_seconds)
+        for task_id in ["easy", "medium", "hard"]
+    }
+
+
 def run_inference_sync(episodes_per_task: int = 1, max_minutes: int = 20) -> dict[str, float]:
     max_seconds = max(60, max_minutes * 60)
     task_ids = ["easy", "medium", "hard"]
@@ -249,10 +262,7 @@ def run_inference_sync(episodes_per_task: int = 1, max_minutes: int = 20) -> dic
             for task_id in task_ids
         }
     except Exception:
-        return {
-            task_id: _run_task(task_id, episodes_per_task, None, "", max_seconds)
-            for task_id in task_ids
-        }
+        return _run_heuristic_scores(episodes_per_task, max_seconds)
 
 
 def main() -> None:
@@ -261,13 +271,34 @@ def main() -> None:
     parser.add_argument("--max-minutes", type=int, default=20)
     args = parser.parse_args()
 
+    episodes = max(1, args.episodes)
+    max_minutes = max(1, args.max_minutes)
+
+    print(f"[START] episodes={episodes} max_minutes={max_minutes} api_base={API_BASE_URL} model={MODEL_NAME}")
+    if LOCAL_IMAGE_NAME:
+        print(f"[STEP] local_image_name={LOCAL_IMAGE_NAME}")
+
     started = time.monotonic()
-    scores = run_inference_sync(episodes_per_task=max(1, args.episodes), max_minutes=max(1, args.max_minutes))
+    try:
+        scores = run_inference_sync(episodes_per_task=episodes, max_minutes=max_minutes)
+    except Exception as exc:
+        print(f"[STEP] primary_inference_failed={type(exc).__name__}: {exc}")
+        try:
+            max_seconds = max(60, max_minutes * 60)
+            scores = _run_heuristic_scores(episodes, max_seconds)
+        except Exception as fallback_exc:
+            print(f"[STEP] heuristic_fallback_failed={type(fallback_exc).__name__}: {fallback_exc}")
+            scores = {"easy": 0.0, "medium": 0.0, "hard": 0.0}
+
     runtime_seconds = round(time.monotonic() - started, 2)
+
+    for task_id in ["easy", "medium", "hard"]:
+        print(f"[STEP] task={task_id} score={scores.get(task_id, 0.0)}")
+    print(f"[END] runtime_seconds={runtime_seconds}")
 
     payload = {
         "script": "inference.py",
-        "episodes_per_task": max(1, args.episodes),
+        "episodes_per_task": episodes,
         "runtime_seconds": runtime_seconds,
         "scores": scores,
     }
