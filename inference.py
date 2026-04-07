@@ -33,7 +33,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 
-def _load_components() -> tuple[type, type]:
+def _load_components() -> tuple[type | None, type | None]:
     for prefix in ("soc_triage_env", "envs.soc_triage_env"):
         try:
             models_mod = importlib.import_module(f"{prefix}.models")
@@ -41,7 +41,7 @@ def _load_components() -> tuple[type, type]:
             return getattr(models_mod, "TriageAction"), getattr(env_mod, "SOCTriageEnv")
         except Exception:
             continue
-    raise RuntimeError("Could not import SOC triage environment package.")
+    return None, None
 
 
 TriageAction, SOCTriageEnv = _load_components()
@@ -77,6 +77,20 @@ def _build_client(api_base_url: str, hf_token: str) -> OpenAI:
     if default_headers:
         return OpenAI(api_key=_normalize_token(hf_token), base_url=api_base_url, default_headers=default_headers)
     return OpenAI(api_key=_normalize_token(hf_token), base_url=api_base_url)
+
+
+def _make_action(classification: str, recommended_action: str, reasoning: str) -> Any:
+    if TriageAction is None:
+        return {
+            "classification": classification,
+            "recommended_action": recommended_action,
+            "reasoning": reasoning,
+        }
+    return TriageAction(
+        classification=classification,
+        recommended_action=recommended_action,
+        reasoning=reasoning,
+    )
 
 
 def _blaxel_base_url(model_name: str) -> str:
@@ -144,31 +158,31 @@ def _heuristic_action(obs: Any) -> Any:
     if obs.task_id == "easy":
         text = (obs.alert.raw_log if obs.alert else "").lower()
         if "beacon" in text or "c2" in text:
-            return TriageAction(
+            return _make_action(
                 classification="critical",
                 recommended_action="escalate",
                 reasoning="Beaconing pattern indicates potential C2 behavior.",
             )
         if "failed" in text or "ssh" in text:
-            return TriageAction(
+            return _make_action(
                 classification="medium",
                 recommended_action="investigate",
                 reasoning="Repeated auth failures should be investigated.",
             )
-        return TriageAction(
+        return _make_action(
             classification="benign",
             recommended_action="ignore",
             reasoning="No strong malicious signal in this log.",
         )
 
     if obs.task_id == "medium":
-        return TriageAction(
+        return _make_action(
             classification="MED-C,MED-E,MED-D,MED-A,MED-B",
             recommended_action="investigate",
             reasoning="Prioritize ransomware and exfiltration indicators.",
         )
 
-    return TriageAction(
+    return _make_action(
         classification="H-01,H-03,H-05,H-07,H-11",
         recommended_action="contain",
         reasoning="Matches recon to exfiltration kill-chain sequence.",
@@ -178,6 +192,9 @@ def _heuristic_action(obs: Any) -> Any:
 def _parse_action(text: str, fallback: Any) -> Any:
     text = (text or "").strip()
     if not text:
+        return fallback
+
+    if TriageAction is None:
         return fallback
 
     try:
@@ -215,6 +232,9 @@ def _model_action(client: OpenAI, model_name: str, obs: Any) -> Any:
 
 
 def _run_task(task_id: str, episodes: int, client: OpenAI | None, model_name: str, max_seconds: int) -> float:
+    if SOCTriageEnv is None:
+        return 0.0
+
     env = SOCTriageEnv()
     total = 0.0
     started = time.monotonic()
@@ -253,6 +273,9 @@ def run_inference_sync(episodes_per_task: int = 1, max_minutes: int = 20) -> dic
     max_seconds = max(60, max_minutes * 60)
     task_ids = ["easy", "medium", "hard"]
 
+    if SOCTriageEnv is None:
+        return {task_id: 0.0 for task_id in task_ids}
+
     # Never fail hard on missing/invalid provider config; fall back to heuristic actions.
     try:
         config = _resolve_runtime_config()
@@ -266,43 +289,56 @@ def run_inference_sync(episodes_per_task: int = 1, max_minutes: int = 20) -> dic
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run inference against all SOC triage tasks.")
-    parser.add_argument("--episodes", type=int, default=1)
-    parser.add_argument("--max-minutes", type=int, default=20)
-    args = parser.parse_args()
-
-    episodes = max(1, args.episodes)
-    max_minutes = max(1, args.max_minutes)
-
-    print(f"[START] episodes={episodes} max_minutes={max_minutes} api_base={API_BASE_URL} model={MODEL_NAME}")
-    if LOCAL_IMAGE_NAME:
-        print(f"[STEP] local_image_name={LOCAL_IMAGE_NAME}")
-
+    episodes = 1
+    max_minutes = 20
     started = time.monotonic()
     try:
-        scores = run_inference_sync(episodes_per_task=episodes, max_minutes=max_minutes)
-    except Exception as exc:
-        print(f"[STEP] primary_inference_failed={type(exc).__name__}: {exc}")
+        parser = argparse.ArgumentParser(description="Run inference against all SOC triage tasks.")
+        parser.add_argument("--episodes", type=int, default=1)
+        parser.add_argument("--max-minutes", type=int, default=20)
+        args = parser.parse_args()
+
+        episodes = max(1, args.episodes)
+        max_minutes = max(1, args.max_minutes)
+
+        print(f"[START] episodes={episodes} max_minutes={max_minutes} api_base={API_BASE_URL} model={MODEL_NAME}")
+        if LOCAL_IMAGE_NAME:
+            print(f"[STEP] local_image_name={LOCAL_IMAGE_NAME}")
+
         try:
-            max_seconds = max(60, max_minutes * 60)
-            scores = _run_heuristic_scores(episodes, max_seconds)
-        except Exception as fallback_exc:
-            print(f"[STEP] heuristic_fallback_failed={type(fallback_exc).__name__}: {fallback_exc}")
-            scores = {"easy": 0.0, "medium": 0.0, "hard": 0.0}
+            scores = run_inference_sync(episodes_per_task=episodes, max_minutes=max_minutes)
+        except Exception as exc:
+            print(f"[STEP] primary_inference_failed={type(exc).__name__}: {exc}")
+            try:
+                max_seconds = max(60, max_minutes * 60)
+                scores = _run_heuristic_scores(episodes, max_seconds)
+            except Exception as fallback_exc:
+                print(f"[STEP] heuristic_fallback_failed={type(fallback_exc).__name__}: {fallback_exc}")
+                scores = {"easy": 0.0, "medium": 0.0, "hard": 0.0}
 
-    runtime_seconds = round(time.monotonic() - started, 2)
+        runtime_seconds = round(time.monotonic() - started, 2)
+        for task_id in ["easy", "medium", "hard"]:
+            print(f"[STEP] task={task_id} score={scores.get(task_id, 0.0)}")
+        print(f"[END] runtime_seconds={runtime_seconds}")
 
-    for task_id in ["easy", "medium", "hard"]:
-        print(f"[STEP] task={task_id} score={scores.get(task_id, 0.0)}")
-    print(f"[END] runtime_seconds={runtime_seconds}")
-
-    payload = {
-        "script": "inference.py",
-        "episodes_per_task": episodes,
-        "runtime_seconds": runtime_seconds,
-        "scores": scores,
-    }
-    print(json.dumps(payload, indent=2))
+        payload = {
+            "script": "inference.py",
+            "episodes_per_task": episodes,
+            "runtime_seconds": runtime_seconds,
+            "scores": scores,
+        }
+        print(json.dumps(payload, indent=2))
+    except Exception as fatal_exc:
+        runtime_seconds = round(time.monotonic() - started, 2)
+        print(f"[STEP] fatal_inference_error={type(fatal_exc).__name__}: {fatal_exc}")
+        print(f"[END] runtime_seconds={runtime_seconds}")
+        payload = {
+            "script": "inference.py",
+            "episodes_per_task": episodes,
+            "runtime_seconds": runtime_seconds,
+            "scores": {"easy": 0.0, "medium": 0.0, "hard": 0.0},
+        }
+        print(json.dumps(payload, indent=2))
 
 
 if __name__ == "__main__":
