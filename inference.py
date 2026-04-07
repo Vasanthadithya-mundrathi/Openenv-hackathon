@@ -19,7 +19,10 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from openai import OpenAI
+try:
+    from openai import OpenAI  # type: ignore
+except Exception:
+    OpenAI = None  # type: ignore[assignment]
 
 
 DEFAULT_BLAXEL_WORKSPACE = "vasanthfeb13"
@@ -68,7 +71,10 @@ def _normalize_token(value: str) -> str:
     return token
 
 
-def _build_client(api_base_url: str, hf_token: str) -> OpenAI:
+def _build_client(api_base_url: str, hf_token: str) -> Any:
+    if OpenAI is None:
+        raise RuntimeError("openai package is not installed.")
+
     default_headers: dict[str, str] = {}
     workspace = os.getenv("BLAXEL_WORKSPACE", "").strip()
     if workspace and "run.blaxel.ai" in api_base_url:
@@ -213,7 +219,7 @@ def _parse_action(text: str, fallback: Any) -> Any:
     return fallback
 
 
-def _model_action(client: OpenAI, model_name: str, obs: Any) -> Any:
+def _model_action(client: Any, model_name: str, obs: Any) -> Any:
     fallback = _heuristic_action(obs)
     try:
         response = client.chat.completions.create(
@@ -231,7 +237,7 @@ def _model_action(client: OpenAI, model_name: str, obs: Any) -> Any:
         return fallback
 
 
-def _run_task(task_id: str, episodes: int, client: OpenAI | None, model_name: str, max_seconds: int) -> float:
+def _run_task(task_id: str, episodes: int, client: Any | None, model_name: str, max_seconds: int) -> float:
     if SOCTriageEnv is None:
         return 0.0
 
@@ -296,12 +302,19 @@ def main() -> None:
         parser = argparse.ArgumentParser(description="Run inference against all SOC triage tasks.")
         parser.add_argument("--episodes", type=int, default=1)
         parser.add_argument("--max-minutes", type=int, default=20)
-        args = parser.parse_args()
+        try:
+            args, unknown_args = parser.parse_known_args()
+        except SystemExit as parse_exc:
+            print(f"[STEP] argparse_error={parse_exc}; using defaults")
+            args = argparse.Namespace(episodes=1, max_minutes=20)
+            unknown_args = []
 
         episodes = max(1, args.episodes)
         max_minutes = max(1, args.max_minutes)
 
         print(f"[START] episodes={episodes} max_minutes={max_minutes} api_base={API_BASE_URL} model={MODEL_NAME}")
+        if unknown_args:
+            print(f"[STEP] ignored_args={' '.join(unknown_args)}")
         if LOCAL_IMAGE_NAME:
             print(f"[STEP] local_image_name={LOCAL_IMAGE_NAME}")
 
