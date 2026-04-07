@@ -331,7 +331,7 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
                 break
 
         # Final score = last reward (since env returns cumulative grading in reward per step)
-        score = max(0.0, min(1.0, sum(rewards)))
+        score = max(0.05, min(0.95, sum(rewards)))
         success = score > 0.0
 
     except Exception as exc:

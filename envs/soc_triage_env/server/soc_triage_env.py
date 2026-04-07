@@ -59,7 +59,7 @@ class SOCTriageEnv:
         partial_credit = self._partial_credit(action)
         penalty = self._penalty(action)
 
-        score = max(0.0, min(1.0, base_score + partial_credit - penalty))
+        score = max(0.05, min(0.95, base_score + partial_credit - penalty))
         self._state.last_score = score
         self._state.total_reward += score
 

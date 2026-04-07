@@ -11,7 +11,7 @@ except Exception:  # pragma: no cover
 
 
 def _clamp01(value: float) -> float:
-    return max(0.0, min(1.0, value))
+    return max(0.05, min(0.95, value))
 
 
 def _kendall_tau_fallback(pred: list[int], truth: list[int]) -> float:
@@ -43,16 +43,16 @@ def grade_easy(action_classification: str, ground_truth_severity: str) -> float:
     gt = ground_truth_severity.lower().strip()
 
     if pred == gt:
-        return 1.0
+        return 0.95
     if pred not in SEVERITY_ORDER or gt not in SEVERITY_ORDER:
-        return 0.0
+        return 0.05
 
     diff = abs(SEVERITY_ORDER.index(pred) - SEVERITY_ORDER.index(gt))
     if diff == 1:
         return 0.5
     if diff == 2:
         return 0.2
-    return 0.0
+    return 0.05
 
 
 def grade_medium(agent_ranking: list[str], ground_truth_ranking: list[str]) -> float:
