@@ -319,7 +319,7 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
                 obs, reward, done, info = env.step(action)
             except Exception as exc:
                 error_msg = str(exc)
-                reward = 0.0
+                reward = 0.01
                 done = True
 
             rewards.append(reward)

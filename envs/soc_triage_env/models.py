@@ -43,8 +43,8 @@ class TriageAction(Action):
 class TriageReward(BaseModel):
     """Detailed reward breakdown."""
 
-    score: float = Field(ge=0.0, le=1.0)
-    base_score: float = Field(ge=0.0, le=1.0)
+    score: float = Field(ge=0.0, le=1.0, default=0.01)
+    base_score: float = Field(ge=0.0, le=1.0, default=0.01)
     partial_credit: float = Field(ge=0.0)
     penalty: float = Field(ge=0.0)
     feedback: str
@@ -63,7 +63,7 @@ class TriageObservation(Observation):
     events: list[AlertRecord] = Field(default_factory=list)
     context_history: list[str] = Field(default_factory=list)
     done: bool = False
-    reward: float = 0.0
+    reward: float = 0.01
 
 
 class TriageState(State):
@@ -75,8 +75,8 @@ class TriageState(State):
     step_count: int = 0
     max_steps: int = 1
     done: bool = False
-    total_reward: float = 0.0
-    last_score: float = 0.0
+    total_reward: float = 0.01
+    last_score: float = 0.01
     false_positives: int = 0
     correct_escalations: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)

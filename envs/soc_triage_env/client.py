@@ -37,7 +37,7 @@ class SOCTriageEnvClient:
         payload = response.json()
         return StepResult(
             observation=TriageObservation(**payload["observation"]),
-            reward=float(payload.get("reward", 0.0)),
+            reward=float(payload.get("reward", 0.01)),
             done=bool(payload.get("done", False)),
             info=dict(payload.get("info", {})),
         )
@@ -52,7 +52,7 @@ class SOCTriageEnvClient:
         payload = response.json()
         return StepResult(
             observation=TriageObservation(**payload["observation"]),
-            reward=float(payload.get("reward", 0.0)),
+            reward=float(payload.get("reward", 0.01)),
             done=bool(payload.get("done", False)),
             info=dict(payload.get("info", {})),
         )
