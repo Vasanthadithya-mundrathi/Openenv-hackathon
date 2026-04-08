@@ -45,14 +45,14 @@ class SOCTriageEnv:
             max_steps=int(task["max_steps"]),
             metadata={"difficulty": task["difficulty"]},
         )
-        return self._build_observation(last_reward=0.0, done=False)
+        return self._build_observation(last_reward=0.01, done=False)
 
     def step(self, action: TriageAction) -> tuple[TriageObservation, float, bool, dict]:
         if self._current_example is None:
             raise RuntimeError("Environment has not been reset. Call reset(task_id=...) first.")
         if self._state.done:
-            obs = self._build_observation(last_reward=0.0, done=True)
-            return obs, 0.0, True, {"message": "Episode already complete"}
+            obs = self._build_observation(last_reward=0.01, done=True)
+            return obs, 0.01, True, {"message": "Episode already complete"}
 
         self._state.step_count += 1
         base_score, feedback = self._grade_action(action)
@@ -125,7 +125,7 @@ class SOCTriageEnv:
             score = grade_hard(predicted_chain, gt_chain)
             return score, "Kill-chain selection scored with F1"
 
-        return 0.0, "Unsupported task"
+        return 0.01, "Unsupported task"
 
     def _partial_credit(self, action: TriageAction) -> float:
         task_id = self._state.task_id

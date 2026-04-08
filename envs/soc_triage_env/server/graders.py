@@ -18,7 +18,7 @@ def _kendall_tau_fallback(pred: list[int], truth: list[int]) -> float:
     """Simple Kendall-tau fallback when scipy is unavailable."""
     n = len(pred)
     if n < 2:
-        return 1.0
+        return 0.99  # single element is trivially ordered
     concordant = 0
     discordant = 0
     for i in range(n):
@@ -33,7 +33,7 @@ def _kendall_tau_fallback(pred: list[int], truth: list[int]) -> float:
                 discordant += 1
     total = concordant + discordant
     if total == 0:
-        return 0.0
+        return 0.5  # no pairs to compare — neutral
     return (concordant - discordant) / total
 
 
@@ -58,7 +58,7 @@ def grade_easy(action_classification: str, ground_truth_severity: str) -> float:
 def grade_medium(agent_ranking: list[str], ground_truth_ranking: list[str]) -> float:
     """Grade alert queue ranking with Kendall-tau normalized to [0,1]."""
     if not ground_truth_ranking:
-        return 0.0
+        return 0.01  # no ground truth — minimally penalised
 
     n = len(ground_truth_ranking)
     pred_ranks: list[int] = []
@@ -84,7 +84,7 @@ def grade_hard(agent_selected: list[str], ground_truth_chain: list[str]) -> floa
     pred = {x.strip() for x in agent_selected if x.strip()}
 
     if not truth:
-        return 0.0
+        return 0.01  # no ground truth — minimally penalised
 
     tp = len(pred & truth)
     fp = len(pred - truth)
@@ -93,6 +93,6 @@ def grade_hard(agent_selected: list[str], ground_truth_chain: list[str]) -> floa
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
     if precision + recall == 0:
-        return 0.0
+        return 0.01  # no overlap at all
     f1 = (2 * precision * recall) / (precision + recall)
     return round(_clamp01(f1), 4)

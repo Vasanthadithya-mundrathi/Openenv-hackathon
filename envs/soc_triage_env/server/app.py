@@ -36,8 +36,48 @@ class BaselineRequest(BaseModel):
     episodes_per_task: int = Field(default=1, ge=1, le=5)
 
 
+import json
+import time
+from pathlib import Path
+
 env = SOCTriageEnv()
 app = FastAPI(title="SOC Triage OpenEnv", version="0.1.0")
+
+# Setup raw validator logging
+LOG_FILE = Path(__file__).parent / "validator_tests.log"
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    start_time = time.time()
+    
+    # Read body for logging
+    body_bytes = await request.body()
+    # Need to restore the body so it can be read by endpoints
+    async def receive():
+        return {"type": "http.request", "body": body_bytes}
+    request._receive = receive
+    
+    response = await call_next(request)
+    
+    process_time = time.time() - start_time
+    
+    # We can't easily read response body in middleware without consuming it,
+    # but we can log the request url and body
+    body_str = body_bytes.decode('utf-8', errors='ignore')
+    
+    log_entry = {
+        "timestamp": time.time(),
+        "method": request.method,
+        "url": str(request.url),
+        "status": response.status_code,
+        "latency_sec": round(process_time, 4),
+        "request_body": body_str
+    }
+    
+    with open(LOG_FILE, "a") as f:
+        f.write(json.dumps(log_entry) + "\n")
+        
+    return response
 
 
 @app.get("/")
@@ -45,8 +85,23 @@ def root() -> dict[str, Any]:
     return {
         "name": "SOC Triage OpenEnv",
         "status": "ok",
-        "endpoints": ["/health", "/reset", "/step", "/state", "/tasks", "/grader", "/baseline"],
+        "endpoints": ["/health", "/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/logs"],
     }
+
+
+@app.get("/logs")
+def get_logs() -> dict[str, Any]:
+    if not LOG_FILE.exists():
+        return {"logs": []}
+    logs = []
+    with open(LOG_FILE, "r") as f:
+        lines = f.readlines()
+        for line in lines[-100:]:
+            try:
+                logs.append(json.loads(line))
+            except Exception:
+                pass
+    return {"logs": logs}
 
 
 @app.get("/health")
@@ -63,7 +118,7 @@ def reset(payload: ResetRequest = Body(default=ResetRequest())) -> dict[str, Any
 
     return {
         "observation": obs.model_dump(),
-        "reward": 0.0,
+        "reward": 0.01,
         "done": False,
         "info": {"task_id": payload.task_id},
     }

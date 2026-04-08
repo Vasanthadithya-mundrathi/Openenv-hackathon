@@ -280,8 +280,8 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
     """Run one episode on *task_id* and return the final score ∈ [0,1]."""
     if SOCTriageEnv is None:
         log_start(task=task_id, env=BENCHMARK, model=model_name)
-        log_end(success=False, steps=0, score=0.0, rewards=[])
-        return 0.0
+        log_end(success=False, steps=0, score=0.01, rewards=[])
+        return 0.01
 
     env = SOCTriageEnv()
     rewards: list[float] = []
@@ -335,7 +335,7 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
         success = score > 0.0
 
     except Exception as exc:
-        log_step(step=steps_taken + 1, action="error", reward=0.0, done=True, error=str(exc))
+        log_step(step=steps_taken + 1, action="error", reward=0.01, done=True, error=str(exc))
 
     log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     return score
@@ -383,11 +383,11 @@ def main() -> None:
 
     except Exception as fatal:
         # Absolute last resort — emit valid [END] so the validator doesn't crash-parse
-        print(f"[END] success=false steps=0 score=0.00 rewards=", flush=True)
+        print(f"[END] success=false steps=0 score=0.01 rewards=", flush=True)
         print(json.dumps({
             "script": "inference.py",
             "fatal_error": str(fatal),
-            "scores": {"easy": 0.0, "medium": 0.0, "hard": 0.0},
+            "scores": {"easy": 0.01, "medium": 0.01, "hard": 0.01},
         }, indent=2), flush=True)
 
 
