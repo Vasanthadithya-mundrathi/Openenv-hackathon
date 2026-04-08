@@ -43,8 +43,8 @@ class TriageAction(Action):
 class TriageReward(BaseModel):
     """Detailed reward breakdown."""
 
-    score: float = Field(ge=0.0, le=1.0, default=0.01)
-    base_score: float = Field(ge=0.0, le=1.0, default=0.01)
+    score: float = Field(gt=0.0, lt=1.0, default=0.01)
+    base_score: float = Field(gt=0.0, lt=1.0, default=0.01)
     partial_credit: float = Field(ge=0.0)
     penalty: float = Field(ge=0.0)
     feedback: str
