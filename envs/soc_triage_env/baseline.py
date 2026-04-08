@@ -155,7 +155,8 @@ def _run_task(task_id: str, episodes: int, provider: str, client: Any | None, mo
 
         total += episode_reward
 
-    return round(total / episodes, 4)
+    avg_score = total / episodes
+    return round(max(0.01, min(0.99, avg_score)), 4)
 
 
 def run_heuristic_baseline_sync(episodes_per_task: int = 1) -> dict[str, float]:

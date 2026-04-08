@@ -286,7 +286,7 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
     env = SOCTriageEnv()
     rewards: list[float] = []
     steps_taken = 0
-    score = 0.0
+    score = 0.01
     success = False
     started = time.monotonic()
 
@@ -368,7 +368,7 @@ def main() -> None:
         scores: dict[str, float] = {}
 
         for task_id in task_ids:
-            best_score = 0.0
+            best_score = 0.01
             for _ in range(episodes):
                 s = run_task(task_id, client, effective_model, max_seconds)
                 best_score = max(best_score, s)

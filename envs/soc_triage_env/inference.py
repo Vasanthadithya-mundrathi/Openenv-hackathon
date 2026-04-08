@@ -280,13 +280,13 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
     """Run one episode on *task_id* and return the final score ∈ [0,1]."""
     if SOCTriageEnv is None:
         log_start(task=task_id, env=BENCHMARK, model=model_name)
-        log_end(success=False, steps=0, score=0.0, rewards=[])
-        return 0.0
+        log_end(success=False, steps=0, score=0.01, rewards=[])
+        return 0.01
 
     env = SOCTriageEnv()
     rewards: list[float] = []
     steps_taken = 0
-    score = 0.0
+    score = 0.01
     success = False
     started = time.monotonic()
 
@@ -319,7 +319,7 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
                 obs, reward, done, info = env.step(action)
             except Exception as exc:
                 error_msg = str(exc)
-                reward = 0.0
+                reward = 0.01
                 done = True
 
             rewards.append(reward)
@@ -331,11 +331,11 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
                 break
 
         # Final score = last reward (since env returns cumulative grading in reward per step)
-        score = max(0.0, min(1.0, sum(rewards)))
+        score = max(0.01, min(0.99, sum(rewards)))
         success = score > 0.0
 
     except Exception as exc:
-        log_step(step=steps_taken + 1, action="error", reward=0.0, done=True, error=str(exc))
+        log_step(step=steps_taken + 1, action="error", reward=0.01, done=True, error=str(exc))
 
     log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
     return score
@@ -368,7 +368,7 @@ def main() -> None:
         scores: dict[str, float] = {}
 
         for task_id in task_ids:
-            best_score = 0.0
+            best_score = 0.01
             for _ in range(episodes):
                 s = run_task(task_id, client, effective_model, max_seconds)
                 best_score = max(best_score, s)
@@ -383,11 +383,11 @@ def main() -> None:
 
     except Exception as fatal:
         # Absolute last resort — emit valid [END] so the validator doesn't crash-parse
-        print(f"[END] success=false steps=0 score=0.00 rewards=", flush=True)
+        print(f"[END] success=false steps=0 score=0.01 rewards=", flush=True)
         print(json.dumps({
             "script": "inference.py",
             "fatal_error": str(fatal),
-            "scores": {"easy": 0.0, "medium": 0.0, "hard": 0.0},
+            "scores": {"easy": 0.01, "medium": 0.01, "hard": 0.01},
         }, indent=2), flush=True)
 
 
