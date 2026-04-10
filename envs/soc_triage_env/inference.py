@@ -366,27 +366,38 @@ def _parse_action(text: str, fallback: Any) -> Any:
 
 
 def _model_action(client: Any, model_name: str, obs: Any) -> Any:
+    """Call the LiteLLM proxy; fall back to heuristic only on complete failure."""
     step_index = max(0, int(getattr(obs, "step_num", 0)))
     fallback = _heuristic_action(obs, step_index=step_index)
+
+    prompt = (
+        f"Task id: {obs.task_id}\n"
+        f"Step: {getattr(obs, 'step_num', 0)}/{getattr(obs, 'max_steps', 1)}\n"
+        f"Available tools: {getattr(obs, 'available_tools', [])}\n"
+        f"Observation JSON:\n{json.dumps(obs.model_dump(), indent=2)}\n"
+        "Return only a JSON object."
+    )
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+    # Call without response_format — LiteLLM proxies often reject it
     try:
-        prompt = (
-            f"Task id: {obs.task_id}\n"
-            f"Step: {getattr(obs, 'step_num', 0)}/{getattr(obs, 'max_steps', 1)}\n"
-            f"Observation JSON:\n{json.dumps(obs.model_dump(), indent=2)}\n"
-            "Return only JSON."
-        )
         response = client.chat.completions.create(
             model=model_name,
             temperature=0.0,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
+            messages=messages,
         )
         content = response.choices[0].message.content or ""
-        return _parse_action(content, fallback)
-    except Exception:
+        print(f"[LLM] API call succeeded, content length={len(content)}", flush=True)
+        parsed = _parse_action(content, None)
+        if parsed is not None:
+            return parsed
+        print("[LLM] Response parse failed, using heuristic action", flush=True)
+        return fallback
+    except Exception as exc:
+        print(f"[LLM] API call failed: {exc}", flush=True)
         return fallback
 
 # ---------------------------------------------------------------------------
