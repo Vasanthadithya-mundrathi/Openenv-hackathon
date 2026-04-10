@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, HTTPException
 from pydantic import BaseModel, Field
 
-from soc_triage_env.models import TriageAction
-from soc_triage_env.server.graders import grade_easy, grade_hard, grade_medium
-from soc_triage_env.server.soc_triage_env import SOCTriageEnv
-from soc_triage_env.server.tasks import TASKS
+try:
+    from openenv.core.env_server.http_server import create_app
+except Exception:
+    from openenv.core.env_server import create_app
 
-
-class ResetRequest(BaseModel):
-    task_id: str = "easy"
-
-
-class StepRequest(BaseModel):
-    action: TriageAction
+try:
+    from ..models import TriageAction, TriageObservation
+    from .graders import grade_easy, grade_hard, grade_medium
+    from .soc_triage_env import SOCTriageEnv
+    from .tasks import TASKS
+except ImportError:
+    from soc_triage_env.models import TriageAction, TriageObservation
+    from soc_triage_env.server.graders import grade_easy, grade_hard, grade_medium
+    from soc_triage_env.server.soc_triage_env import SOCTriageEnv
+    from soc_triage_env.server.tasks import TASKS
 
 
 class GraderRequest(BaseModel):
@@ -40,31 +44,35 @@ import json
 import time
 from pathlib import Path
 
-env = SOCTriageEnv()
-app = FastAPI(title="SOC Triage OpenEnv", version="0.1.0")
+def _build_app() -> Any:
+    sig = inspect.signature(create_app)
+    kwargs: dict[str, Any] = {
+        "env_name": "soc_triage_env",
+        "max_concurrent_envs": 10,
+    }
+    if "max_concurrent_envs" not in sig.parameters:
+        kwargs.pop("max_concurrent_envs", None)
+    return create_app(SOCTriageEnv, TriageAction, TriageObservation, **kwargs)
 
-# Setup raw validator logging
+
+app = _build_app()
+_grader_env = SOCTriageEnv()
+
 LOG_FILE = Path(__file__).parent / "validator_tests.log"
 
 @app.middleware("http")
 async def log_requests(request, call_next):
     start_time = time.time()
-    
-    # Read body for logging
     body_bytes = await request.body()
-    # Need to restore the body so it can be read by endpoints
+    
     async def receive():
         return {"type": "http.request", "body": body_bytes}
     request._receive = receive
     
     response = await call_next(request)
-    
     process_time = time.time() - start_time
     
-    # We can't easily read response body in middleware without consuming it,
-    # but we can log the request url and body
     body_str = body_bytes.decode('utf-8', errors='ignore')
-    
     log_entry = {
         "timestamp": time.time(),
         "method": request.method,
@@ -85,9 +93,21 @@ def root() -> dict[str, Any]:
     return {
         "name": "SOC Triage OpenEnv",
         "status": "ok",
-        "endpoints": ["/health", "/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/logs"],
+        "mode": "interactive",
+        "endpoints": [
+            "/health",
+            "/reset",
+            "/step",
+            "/state",
+            "/schema",
+            "/tasks",
+            "/grader",
+            "/baseline",
+            "/ws",
+            "/web",
+            "/logs",
+        ],
     }
-
 
 @app.get("/logs")
 def get_logs() -> dict[str, Any]:
@@ -103,47 +123,6 @@ def get_logs() -> dict[str, Any]:
                 pass
     return {"logs": logs}
 
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post("/reset")
-def reset(payload: ResetRequest = Body(default=ResetRequest())) -> dict[str, Any]:
-    try:
-        obs = env.reset(task_id=payload.task_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "observation": obs.model_dump(),
-        "reward": 0.01,
-        "done": False,
-        "info": {"task_id": payload.task_id},
-    }
-
-
-@app.post("/step")
-def step(payload: StepRequest) -> dict[str, Any]:
-    try:
-        obs, reward, done, info = env.step(payload.action)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "observation": obs.model_dump(),
-        "reward": round(reward, 4),
-        "done": done,
-        "info": info,
-    }
-
-
-@app.get("/state")
-def state() -> dict[str, Any]:
-    return env.state.model_dump()
-
-
 @app.get("/tasks")
 def tasks() -> dict[str, Any]:
     return {"tasks": TASKS}
@@ -151,25 +130,25 @@ def tasks() -> dict[str, Any]:
 
 @app.post("/grader")
 def grader(payload: GraderRequest) -> dict[str, Any]:
-    ground_truth = payload.ground_truth or env.ground_truth
-    task_id = payload.task_id
+    task_id = payload.task_id.strip().lower()
+    if task_id not in TASKS:
+        raise HTTPException(status_code=400, detail=f"Unsupported task_id: {task_id}")
+
+    ground_truth = payload.ground_truth or _grader_env.ground_truth
+    classification = _classification_from_action(payload.action)
 
     if task_id == "easy":
-        score = grade_easy(payload.action.classification, str(ground_truth.get("severity", "benign")))
+        score = grade_easy(classification, str(ground_truth.get("severity", "benign")))
     elif task_id == "medium":
-        predicted = _parse_ids(payload.action.classification)
-        score = grade_medium(predicted, list(ground_truth.get("ranking", [])))
-    elif task_id == "hard":
-        predicted = _parse_ids(payload.action.classification)
-        score = grade_hard(predicted, list(ground_truth.get("kill_chain", [])))
+        score = grade_medium(_parse_ids(classification), list(ground_truth.get("ranking", [])))
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported task_id: {task_id}")
+        score = grade_hard(_parse_ids(classification), list(ground_truth.get("kill_chain", [])))
 
     return {"task_id": task_id, "score": round(score, 4)}
 
 
 @app.post("/baseline")
-def baseline(payload: BaselineRequest = Body(default=BaselineRequest())) -> dict[str, Any]:
+def baseline(payload: BaselineRequest = Body(default_factory=BaselineRequest)) -> dict[str, Any]:
     """Run provider baseline if keys are set, else return heuristic fallback."""
     provider = payload.provider.lower().strip()
     if provider not in {"openai", "cerebras", "blaxel"}:
@@ -201,39 +180,55 @@ def _heuristic_baseline() -> dict[str, float]:
     local_env = SOCTriageEnv()
     scores: dict[str, float] = {}
 
-    easy_action = TriageAction(
-        classification="high",
-        recommended_action="investigate",
-        reasoning="Heuristic baseline for easy task.",
-    )
-    medium_action = TriageAction(
-        classification="MED-C,MED-E,MED-D,MED-A,MED-B",
-        recommended_action="investigate",
-        reasoning="Heuristic ranking using known priority signal order.",
-    )
-    hard_action = TriageAction(
-        classification="H-01,H-03,H-05,H-07,H-11",
-        recommended_action="contain",
-        reasoning="Heuristic kill-chain pattern match.",
-    )
-    actions = {"easy": easy_action, "medium": medium_action, "hard": hard_action}
+    verdicts = {
+        "easy": TriageAction(
+            tool_name="submit_verdict",
+            classification="high",
+            recommended_action="investigate",
+            reasoning="Heuristic baseline for easy task.",
+        ),
+        "medium": TriageAction(
+            tool_name="submit_verdict",
+            classification="MED-C,MED-E,MED-D,MED-A,MED-B",
+            recommended_action="investigate",
+            reasoning="Heuristic ranking using known priority signal order.",
+        ),
+        "hard": TriageAction(
+            tool_name="submit_verdict",
+            classification="H-01,H-03,H-05,H-07,H-11",
+            recommended_action="contain",
+            reasoning="Heuristic kill-chain pattern match.",
+        ),
+    }
 
-    for task_id, action in actions.items():
+    for task_id, verdict in verdicts.items():
         local_env.reset(task_id=task_id)
-        _, reward, _, _ = local_env.step(action)
-        scores[task_id] = round(reward, 4)
+        # Perform one investigative action before submission to use multi-turn mechanics.
+        local_env.step(TriageAction(tool_name="query_siem", tool_args={"query": "suspicious"}))
+        obs = local_env.step(verdict)
+        scores[task_id] = round(obs.reward, 4)
     return scores
+
+
+def _classification_from_action(action: TriageAction) -> str:
+    if action.classification:
+        return action.classification
+    if isinstance(action.tool_args, dict):
+        value = action.tool_args.get("classification", "")
+        return str(value).strip()
+    return ""
 
 
 def _parse_ids(value: str) -> list[str]:
     return [x.strip() for x in value.split(",") if x.strip()]
 
 
-def main() -> None:
+def main(host: str = "0.0.0.0", port: int | None = None) -> None:
     """Run the API with uvicorn for local and validator execution."""
     import uvicorn
 
-    uvicorn.run("soc_triage_env.server.app:app", host="0.0.0.0", port=8000)
+    resolved_port = port if port is not None else int(os.getenv("API_PORT", "8000"))
+    uvicorn.run(app, host=host, port=resolved_port)
 
 
 if __name__ == "__main__":
