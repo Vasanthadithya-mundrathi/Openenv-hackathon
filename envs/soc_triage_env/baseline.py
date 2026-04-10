@@ -41,8 +41,8 @@ SYSTEM_PROMPT = (
 
 @dataclass
 class BaselineConfig:
-    provider: str = "blaxel"
-    model: str = "sandbox-openai"
+    provider: str = "openai"
+    model: str = "gpt-4o-mini"
     fallback_provider: str = "cerebras"
     fallback_model: str = "llama3.1-8b"
     episodes_per_task: int = 1
@@ -251,7 +251,11 @@ def _resolve_api_key(provider: str) -> str:
         return os.getenv("CEREBRAS_API_KEY", "").strip()
     if provider == "blaxel":
         return os.getenv("BLAXEL_AUTHORIZATION", "").strip()
-    return os.getenv("OPENAI_API_KEY", "").strip()
+    return (
+        os.getenv("OPENAI_API_KEY", "").strip()
+        or os.getenv("API_KEY", "").strip()
+        or os.getenv("HF_TOKEN", "").strip()
+    )
 
 
 def _resolve_model(provider: str, model: str | None) -> str:
@@ -309,7 +313,7 @@ def _build_client(provider: str, api_key: str, model: str) -> Any:
             return OpenAI(api_key=normalized_key, base_url=base_url, default_headers=default_headers)
         return OpenAI(api_key=normalized_key, base_url=base_url)
 
-    openai_base_url = os.getenv("OPENAI_API_BASE_URL", "").strip()
+    openai_base_url = os.getenv("OPENAI_API_BASE_URL", "").strip() or os.getenv("API_BASE_URL", "").strip()
     if openai_base_url:
         return OpenAI(api_key=normalized_key, base_url=openai_base_url)
     return OpenAI(api_key=normalized_key)
@@ -376,8 +380,8 @@ def run_baseline_with_fallback_sync(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run SOC triage baseline across all tasks.")
-    parser.add_argument("--provider", default=os.getenv("AI_PROVIDER", "blaxel"))
-    parser.add_argument("--model", default=os.getenv("AI_MODEL", "sandbox-openai"))
+    parser.add_argument("--provider", default=os.getenv("AI_PROVIDER", "openai"))
+    parser.add_argument("--model", default=os.getenv("AI_MODEL", "gpt-4o-mini"))
     parser.add_argument("--fallback-provider", default=os.getenv("AI_FALLBACK_PROVIDER", "cerebras"))
     parser.add_argument("--fallback-model", default=os.getenv("AI_FALLBACK_MODEL", "llama3.1-8b"))
     parser.add_argument("--episodes", type=int, default=1)

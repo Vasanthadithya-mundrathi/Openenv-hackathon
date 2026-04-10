@@ -3,8 +3,9 @@ Inference script for SOC Triage environment.
 
 MANDATORY submission variables:
 - API_BASE_URL: OpenAI-compatible chat completions API base URL.
+- API_KEY: token for the provided OpenAI-compatible proxy (preferred).
+- HF_TOKEN: accepted compatibility alias for API_KEY.
 - MODEL_NAME: model identifier for inference.
-- HF_TOKEN: API token.
 
 STDOUT FORMAT (mandatory):
   [START] task=<task_name> env=soc_triage_env model=<model_name>
@@ -26,10 +27,19 @@ from typing import Any, List, Optional
 # ---------------------------------------------------------------------------
 # Mandatory env vars
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.getenv("API_BASE_URL", "https://vasanthfeb13-soc-triage-env.hf.space")
-MODEL_NAME = os.getenv("MODEL_NAME", "sandbox-openai")
-HF_TOKEN = os.getenv("HF_TOKEN")
+API_BASE_URL = os.getenv("API_BASE_URL", "").strip() or os.getenv("OPENAI_API_BASE_URL", "").strip()
+MODEL_NAME = os.getenv("MODEL_NAME", "sandbox-openai").strip()
+API_KEY = (
+    os.getenv("API_KEY", "").strip()
+    or os.getenv("HF_TOKEN", "").strip()
+    or os.getenv("OPENAI_API_KEY", "").strip()
+)
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+ALLOW_PROVIDER_FALLBACK = os.getenv("ALLOW_PROVIDER_FALLBACK", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 # Fallback provider keys (used only if the 3 mandatory vars above are incomplete)
 DEFAULT_BLAXEL_WORKSPACE = "vasanthfeb13"
@@ -118,7 +128,7 @@ def _normalize_token(value: str) -> str:
     return token
 
 
-def _build_client(api_base_url: str, hf_token: str) -> Any:
+def _build_client(api_base_url: str, api_key: str) -> Any:
     if OpenAI is None:
         raise RuntimeError("openai package is not installed.")
 
@@ -128,8 +138,8 @@ def _build_client(api_base_url: str, hf_token: str) -> Any:
         default_headers["X-Blaxel-Workspace"] = workspace
 
     if default_headers:
-        return OpenAI(api_key=_normalize_token(hf_token), base_url=api_base_url, default_headers=default_headers)
-    return OpenAI(api_key=_normalize_token(hf_token), base_url=api_base_url)
+        return OpenAI(api_key=_normalize_token(api_key), base_url=api_base_url, default_headers=default_headers)
+    return OpenAI(api_key=_normalize_token(api_key), base_url=api_base_url)
 
 # ---------------------------------------------------------------------------
 # Provider / runtime config resolution
@@ -152,16 +162,21 @@ def _resolve_client() -> tuple[Any, str] | None:
     """Return (client, model_name) or None if nothing is configured."""
     api_base = (API_BASE_URL or "").strip()
     model = (MODEL_NAME or "").strip()
-    token = (HF_TOKEN or "").strip()
+    token = (API_KEY or "").strip()
 
-    # Primary: all 3 mandatory vars set
+    # Primary: validator-injected proxy configuration (API_KEY or HF_TOKEN)
     if api_base and model and token:
         try:
             return _build_client(api_base, token), model
         except Exception:
-            pass
+            return None
 
-    # Fallback: Blaxel
+    # In submission mode we intentionally do not use personal provider creds,
+    # because Phase 2 requires traffic through the provided proxy.
+    if not ALLOW_PROVIDER_FALLBACK:
+        return None
+
+    # Optional local-only fallback: Blaxel
     blaxel_key = os.getenv("BLAXEL_AUTHORIZATION", "").strip()
     if blaxel_key:
         m = model or os.getenv("BLAXEL_MODEL", DEFAULT_BLAXEL_MODEL).strip()
@@ -172,7 +187,7 @@ def _resolve_client() -> tuple[Any, str] | None:
         except Exception:
             pass
 
-    # Fallback: Cerebras
+    # Optional local-only fallback: Cerebras
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     if cerebras_key:
         m = model or os.getenv("CEREBRAS_MODEL", DEFAULT_CEREBRAS_MODEL).strip()

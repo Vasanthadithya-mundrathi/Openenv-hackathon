@@ -143,7 +143,8 @@ For submission, use the root-level inference script:
 - required environment variables:
   - API_BASE_URL
   - MODEL_NAME
-  - HF_TOKEN
+  - API_KEY (preferred)
+  - HF_TOKEN (accepted alias for API_KEY)
 - all LLM calls are made via OpenAI client
 
 Example with Blaxel:
@@ -151,7 +152,8 @@ Example with Blaxel:
 ```bash
 export API_BASE_URL="https://run.blaxel.ai/vasanthfeb13/models/sandbox-openai/v1"
 export MODEL_NAME="sandbox-openai"
-export HF_TOKEN="your_token"
+export API_KEY="your_token"
+export HF_TOKEN="$API_KEY"  # optional compatibility alias
 export BLAXEL_WORKSPACE="vasanthfeb13"
 
 python inference.py --episodes 1 --max-minutes 20
@@ -162,7 +164,8 @@ Example with any OpenAI-compatible endpoint:
 ```bash
 export API_BASE_URL="https://router.huggingface.co/v1"
 export MODEL_NAME="openai/gpt-4o-mini"
-export HF_TOKEN="your_hf_token"
+export API_KEY="your_hf_token"
+export HF_TOKEN="$API_KEY"  # optional compatibility alias
 
 python inference.py --episodes 1 --max-minutes 20
 ```
