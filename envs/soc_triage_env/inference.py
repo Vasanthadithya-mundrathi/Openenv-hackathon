@@ -25,12 +25,18 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 # ---------------------------------------------------------------------------
-# Mandatory env vars
+# Mandatory env vars — the validator injects API_BASE_URL and API_KEY.
+# MODEL_NAME is optional; default to 'gpt-4o-mini' so the proxy call fires
+# even when the evaluator doesn't set it.
 # ---------------------------------------------------------------------------
 API_BASE_URL = os.getenv("API_BASE_URL", "").strip() or os.getenv("OPENAI_API_BASE_URL", "").strip()
-MODEL_NAME = os.getenv("MODEL_NAME", "sandbox-openai").strip()
+MODEL_NAME = (
+    os.getenv("MODEL_NAME", "").strip()
+    or os.getenv("AI_MODEL", "").strip()
+    or "gpt-4o-mini"
+)
 API_KEY = (
-    os.getenv("API_KEY", "").strip()
+    os.getenv("API_KEY", "").strip()        # validator-injected key  ← PRIMARY
     or os.getenv("HF_TOKEN", "").strip()
     or os.getenv("OPENAI_API_KEY", "").strip()
 )
@@ -41,7 +47,6 @@ ALLOW_PROVIDER_FALLBACK = os.getenv("ALLOW_PROVIDER_FALLBACK", "0").strip().lowe
     "yes",
 }
 
-# Fallback provider keys (used only if the 3 mandatory vars above are incomplete)
 DEFAULT_BLAXEL_WORKSPACE = "vasanthfeb13"
 DEFAULT_BLAXEL_MODEL = "sandbox-openai"
 DEFAULT_CEREBRAS_MODEL = "llama3.1-8b"
@@ -52,7 +57,7 @@ MAX_STEPS_MAP = {"easy": 4, "medium": 5, "hard": 6}
 SYSTEM_PROMPT = (
     "You are a SOC analyst in an interactive OpenEnv environment. "
     "Return strict JSON with keys: tool_name, tool_args, classification, recommended_action, reasoning. "
-    "Use investigation tools before submit_verdict."
+    "Use investigation tools (query_siem, get_threat_intel, pivot_alert) before submit_verdict."
 )
 
 # ---------------------------------------------------------------------------
@@ -159,42 +164,48 @@ def _blaxel_base_url(model_name: str) -> str:
 
 
 def _resolve_client() -> tuple[Any, str] | None:
-    """Return (client, model_name) or None if nothing is configured."""
+    """Return (client, model_name) or None if nothing is configured.
+
+    Priority:
+      1. API_BASE_URL + API_KEY  (validator proxy — always preferred)
+      2. Provider-specific creds  (only when ALLOW_PROVIDER_FALLBACK=1)
+    """
     api_base = (API_BASE_URL or "").strip()
-    model = (MODEL_NAME or "").strip()
+    model = (MODEL_NAME or "").strip() or "gpt-4o-mini"
     token = (API_KEY or "").strip()
 
-    # Primary: validator-injected proxy configuration (API_KEY or HF_TOKEN)
-    if api_base and model and token:
+    # ── Primary path: validator injects API_BASE_URL + API_KEY ──────────────
+    if api_base and token:
         try:
-            return _build_client(api_base, token), model
-        except Exception:
+            client = _build_client(api_base, token)
+            print(f"[CLIENT] Using validator proxy: base={api_base} model={model}", flush=True)
+            return client, model
+        except Exception as exc:
+            print(f"[CLIENT] Failed to build proxy client: {exc}", flush=True)
             return None
 
-    # In submission mode we intentionally do not use personal provider creds,
-    # because Phase 2 requires traffic through the provided proxy.
+    # ── Submission mode: no proxy creds → heuristic only ───────────────────
     if not ALLOW_PROVIDER_FALLBACK:
+        print("[CLIENT] No API_BASE_URL/API_KEY found and ALLOW_PROVIDER_FALLBACK=0 — heuristic mode.", flush=True)
         return None
 
-    # Optional local-only fallback: Blaxel
+    # ── Local-dev fallback: Blaxel ───────────────────────────────────────────
     blaxel_key = os.getenv("BLAXEL_AUTHORIZATION", "").strip()
     if blaxel_key:
-        m = model or os.getenv("BLAXEL_MODEL", DEFAULT_BLAXEL_MODEL).strip()
+        m = os.getenv("BLAXEL_MODEL", DEFAULT_BLAXEL_MODEL).strip() or model
         b = api_base or _blaxel_base_url(m)
-        t = token or blaxel_key
         try:
-            return _build_client(b, t), m
+            return _build_client(b, blaxel_key), m
         except Exception:
             pass
 
-    # Optional local-only fallback: Cerebras
+    # ── Local-dev fallback: Cerebras ─────────────────────────────────────────
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     if cerebras_key:
-        m = model or os.getenv("CEREBRAS_MODEL", DEFAULT_CEREBRAS_MODEL).strip()
+        m = os.getenv("CEREBRAS_MODEL", DEFAULT_CEREBRAS_MODEL).strip() or model
         b = api_base or os.getenv("CEREBRAS_API_BASE_URL", "https://api.cerebras.ai/v1").strip()
-        t = token or cerebras_key
         try:
-            return _build_client(b, t), m
+            return _build_client(b, cerebras_key), m
         except Exception:
             pass
 
