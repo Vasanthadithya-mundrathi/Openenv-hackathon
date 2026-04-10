@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 SEVERITY_ORDER = ["benign", "low", "medium", "high", "critical"]
 
 try:
@@ -60,7 +62,16 @@ def grade_medium(agent_ranking: list[str], ground_truth_ranking: list[str]) -> f
     if not ground_truth_ranking:
         return 0.01  # no ground truth — minimally penalised
 
+    if not agent_ranking:
+        return 0.01
+
     n = len(ground_truth_ranking)
+    gt_set = set(ground_truth_ranking)
+    overlap = [alert_id for alert_id in agent_ranking if alert_id in gt_set]
+    overlap_count = len(set(overlap))
+    if overlap_count == 0:
+        return 0.01
+
     pred_ranks: list[int] = []
     for alert_id in ground_truth_ranking:
         if alert_id in agent_ranking:
@@ -71,11 +82,19 @@ def grade_medium(agent_ranking: list[str], ground_truth_ranking: list[str]) -> f
     truth_ranks = list(range(n))
     if _kendalltau is not None:
         tau, _ = _kendalltau(pred_ranks, truth_ranks)
-        tau = float(tau) if tau is not None else 0.0
+        if tau is None:
+            tau = _kendall_tau_fallback(pred_ranks, truth_ranks)
+        else:
+            tau = float(tau)
+            if math.isnan(tau):
+                tau = _kendall_tau_fallback(pred_ranks, truth_ranks)
     else:
         tau = _kendall_tau_fallback(pred_ranks, truth_ranks)
 
-    return round(_clamp01((tau + 1.0) / 2.0), 4)
+    tau_score = (tau + 1.0) / 2.0
+    coverage_score = overlap_count / n
+    blended = (0.7 * tau_score) + (0.3 * coverage_score)
+    return round(_clamp01(blended), 4)
 
 
 def grade_hard(agent_selected: list[str], ground_truth_chain: list[str]) -> float:

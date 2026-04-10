@@ -33,8 +33,9 @@ TriageAction, TriageObservation, SOCTriageEnv = _load_components()
 
 
 SYSTEM_PROMPT = (
-    "You are a SOC analyst agent. Respond with strict JSON keys: "
-    "classification, recommended_action, reasoning."
+    "You are a SOC analyst agent in an interactive OpenEnv task. "
+    "Respond with strict JSON keys: tool_name, tool_args, classification, recommended_action, reasoning. "
+    "Use investigation tools before submitting final verdict."
 )
 
 
@@ -53,28 +54,36 @@ def _prompt_for_observation(obs: Any) -> str:
         "Task id: "
         + obs.task_id
         + "\n"
+        + "Step: "
+        + str(getattr(obs, "step_num", 0))
+        + "/"
+        + str(getattr(obs, "max_steps", 1))
+        + "\n"
         + "Observation JSON:\n"
         + json.dumps(obs.model_dump(), indent=2)
         + "\nReturn valid JSON only."
     )
 
 
-def _heuristic_action(obs: Any) -> Any:
+def _heuristic_verdict(obs: Any) -> Any:
     if obs.task_id == "easy":
-        text = (obs.alert.raw_log if obs.alert else "").lower()
+        text = (obs.alert.raw_log if getattr(obs, "alert", None) else "").lower()
         if "beacon" in text or "c2" in text:
             return TriageAction(
+                tool_name="submit_verdict",
                 classification="critical",
                 recommended_action="escalate",
                 reasoning="Beaconing indicates likely command-and-control traffic.",
             )
         if "failed" in text or "ssh" in text:
             return TriageAction(
+                tool_name="submit_verdict",
                 classification="medium",
                 recommended_action="investigate",
                 reasoning="Repeated failed logins require investigation.",
             )
         return TriageAction(
+            tool_name="submit_verdict",
             classification="benign",
             recommended_action="ignore",
             reasoning="No clear malicious indicator in the event.",
@@ -82,16 +91,75 @@ def _heuristic_action(obs: Any) -> Any:
 
     if obs.task_id == "medium":
         return TriageAction(
+            tool_name="submit_verdict",
             classification="MED-C,MED-E,MED-D,MED-A,MED-B",
             recommended_action="investigate",
             reasoning="Prioritize ransomware and data exfil signals over noise.",
         )
 
     return TriageAction(
+        tool_name="submit_verdict",
         classification="H-01,H-03,H-05,H-07,H-11",
         recommended_action="contain",
         reasoning="Pattern matches recon, exploit, shell, lateral movement, exfiltration.",
     )
+
+
+def _heuristic_action(obs: Any, step_index: int) -> Any:
+    if step_index == 0:
+        query = {
+            "easy": "failed login outbound beacon privilege",
+            "medium": "ransomware outbound data privilege",
+            "hard": "scan exploit shell lateral exfil",
+        }.get(obs.task_id, "suspicious")
+        return TriageAction(
+            tool_name="query_siem",
+            tool_args={"query": query},
+            reasoning="Initial SIEM investigation sweep.",
+        )
+
+    if step_index == 1:
+        ioc = _pick_ioc(obs)
+        return TriageAction(
+            tool_name="get_threat_intel",
+            tool_args={"ioc": ioc},
+            reasoning="Threat-intel enrichment for discovered IOC.",
+        )
+
+    if step_index == 2 and obs.task_id == "hard":
+        alert_id = _pick_alert_id(obs)
+        return TriageAction(
+            tool_name="pivot_alert",
+            tool_args={"alert_id": alert_id},
+            reasoning="Pivot to correlate related timeline events.",
+        )
+
+    return _heuristic_verdict(obs)
+
+
+def _pick_ioc(obs: Any) -> str:
+    if getattr(obs, "known_iocs", None):
+        values = [str(v) for v in obs.known_iocs if str(v).strip()]
+        if values:
+            return values[0]
+    if getattr(obs, "alert", None):
+        if getattr(obs.alert, "source_ip", None):
+            return str(obs.alert.source_ip)
+        if getattr(obs.alert, "destination_ip", None):
+            return str(obs.alert.destination_ip)
+    return "suspicious-ioc"
+
+
+def _pick_alert_id(obs: Any) -> str:
+    if getattr(obs, "events", None):
+        first = obs.events[0]
+        return str(getattr(first, "alert_id", ""))
+    if getattr(obs, "alerts", None):
+        first = obs.alerts[0]
+        return str(getattr(first, "alert_id", ""))
+    if getattr(obs, "alert", None):
+        return str(getattr(obs.alert, "alert_id", ""))
+    return ""
 
 
 def _parse_action(text: str, fallback: Any) -> Any:
@@ -118,7 +186,8 @@ def _parse_action(text: str, fallback: Any) -> Any:
 
 
 def _model_action(provider: str, client: Any, model: str, obs: Any) -> Any:
-    fallback = _heuristic_action(obs)
+    step_index = max(0, int(getattr(obs, "step_num", 0)))
+    fallback = _heuristic_action(obs, step_index=step_index)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": _prompt_for_observation(obs)},
@@ -142,18 +211,22 @@ def _run_task(task_id: str, episodes: int, provider: str, client: Any | None, mo
     for _ in range(episodes):
         obs = env.reset(task_id=task_id)
         done = False
-        episode_reward = 0.0
+        episode_reward = 0.01
+        max_steps = max(1, int(getattr(obs, "max_steps", 4)))
+        step_index = 0
 
-        while not done:
+        while not done and step_index < max_steps:
             if client is None:
-                action = _heuristic_action(obs)
+                action = _heuristic_action(obs, step_index=step_index)
             else:
                 action = _model_action(provider, client, model, obs)
 
-            obs, reward, done, _ = env.step(action)
-            episode_reward += reward
+            obs = env.step(action)
+            episode_reward = float(getattr(obs, "reward", 0.01) or 0.01)
+            done = bool(getattr(obs, "done", False))
+            step_index += 1
 
-        total += episode_reward
+        total += max(0.01, min(0.99, episode_reward))
 
     avg_score = total / episodes
     return round(max(0.01, min(0.99, avg_score)), 4)

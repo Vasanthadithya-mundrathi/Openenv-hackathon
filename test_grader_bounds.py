@@ -114,7 +114,8 @@ for label, actions in [("perfect", perfect_actions), ("worst", worst_actions)]:
     for task_id, action in actions.items():
         local_env = SOCTriageEnv()
         local_env.reset(task_id=task_id)
-        obs, reward, done, info = local_env.step(action)
+        obs = local_env.step(action)
+        reward = obs.reward
         check(f"step({task_id}, {label}).reward", reward)
         check(f"step({task_id}, {label}).obs.reward", obs.reward)
 
@@ -125,7 +126,8 @@ for task_id in ["easy", "medium", "hard"]:
     local_env.reset(task_id=task_id)
     action = perfect_actions[task_id]
     local_env.step(action)  # first step completes it
-    obs, reward, done, info = local_env.step(action)  # call again after done
+    obs = local_env.step(action)  # call again after done
+    reward = obs.reward
     check(f"step({task_id}, already_done).reward", reward)
 
 # ===== 7. inference.py stdout =====

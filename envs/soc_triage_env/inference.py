@@ -37,11 +37,12 @@ DEFAULT_BLAXEL_MODEL = "sandbox-openai"
 DEFAULT_CEREBRAS_MODEL = "llama3.1-8b"
 
 BENCHMARK = "soc_triage_env"
-MAX_STEPS_MAP = {"easy": 1, "medium": 1, "hard": 3}
+MAX_STEPS_MAP = {"easy": 4, "medium": 5, "hard": 6}
 
 SYSTEM_PROMPT = (
-    "You are a SOC analyst. Return strict JSON with keys: "
-    "classification, recommended_action, reasoning."
+    "You are a SOC analyst in an interactive OpenEnv environment. "
+    "Return strict JSON with keys: tool_name, tool_args, classification, recommended_action, reasoning. "
+    "Use investigation tools before submit_verdict."
 )
 
 # ---------------------------------------------------------------------------
@@ -188,14 +189,24 @@ def _resolve_client() -> tuple[Any, str] | None:
 # Action helpers
 # ---------------------------------------------------------------------------
 
-def _make_action(classification: str, recommended_action: str, reasoning: str) -> Any:
+def _make_action(
+    tool_name: str,
+    tool_args: dict[str, Any] | None = None,
+    classification: str | None = None,
+    recommended_action: str | None = None,
+    reasoning: str = "",
+) -> Any:
     if TriageAction is None:
         return {
+            "tool_name": tool_name,
+            "tool_args": tool_args or {},
             "classification": classification,
             "recommended_action": recommended_action,
             "reasoning": reasoning,
         }
     return TriageAction(
+        tool_name=tool_name,
+        tool_args=tool_args or {},
         classification=classification,
         recommended_action=recommended_action,
         reasoning=reasoning,
@@ -205,31 +216,109 @@ def _make_action(classification: str, recommended_action: str, reasoning: str) -
 def _action_to_str(action: Any) -> str:
     """Return a short, single-line representation of the action for [STEP] logging."""
     try:
+        tool = action.tool_name if hasattr(action, "tool_name") else action.get("tool_name", "submit_verdict")
         cls = action.classification if hasattr(action, "classification") else action.get("classification", "")
         rec = action.recommended_action if hasattr(action, "recommended_action") else action.get("recommended_action", "")
-        return f"{cls}|{rec}"
+        return f"{tool}|{cls}|{rec}"
     except Exception:
         return str(action)[:80]
 
 
-def _heuristic_action(obs: Any) -> Any:
+def _pick_ioc(obs: Any) -> str:
+    known = getattr(obs, "known_iocs", []) or []
+    known = [str(v) for v in known if str(v).strip()]
+    if known:
+        return known[0]
+    if hasattr(obs, "alert") and obs.alert is not None:
+        if getattr(obs.alert, "source_ip", None):
+            return str(obs.alert.source_ip)
+        if getattr(obs.alert, "destination_ip", None):
+            return str(obs.alert.destination_ip)
+    return "suspicious-ioc"
+
+
+def _pick_alert_id(obs: Any) -> str:
+    events = getattr(obs, "events", []) or []
+    if events:
+        return str(getattr(events[0], "alert_id", ""))
+    alerts = getattr(obs, "alerts", []) or []
+    if alerts:
+        return str(getattr(alerts[0], "alert_id", ""))
+    if hasattr(obs, "alert") and obs.alert is not None:
+        return str(getattr(obs.alert, "alert_id", ""))
+    return ""
+
+
+def _heuristic_verdict(obs: Any) -> Any:
     task_id = obs.task_id if hasattr(obs, "task_id") else "easy"
 
     if task_id == "easy":
         text = (obs.alert.raw_log if hasattr(obs, "alert") and obs.alert else "").lower()
         if "beacon" in text or "c2" in text:
-            return _make_action("critical", "escalate", "Beaconing pattern indicates potential C2 behavior.")
+            return _make_action(
+                tool_name="submit_verdict",
+                classification="critical",
+                recommended_action="escalate",
+                reasoning="Beaconing pattern indicates potential C2 behavior.",
+            )
         if "failed" in text or "ssh" in text:
-            return _make_action("medium", "investigate", "Repeated auth failures should be investigated.")
-        return _make_action("benign", "ignore", "No strong malicious signal in this log.")
+            return _make_action(
+                tool_name="submit_verdict",
+                classification="medium",
+                recommended_action="investigate",
+                reasoning="Repeated auth failures should be investigated.",
+            )
+        return _make_action(
+            tool_name="submit_verdict",
+            classification="benign",
+            recommended_action="ignore",
+            reasoning="No strong malicious signal in this log.",
+        )
 
     if task_id == "medium":
-        return _make_action("MED-C,MED-E,MED-D,MED-A,MED-B", "investigate",
-                            "Prioritize ransomware and exfiltration indicators.")
+        return _make_action(
+            tool_name="submit_verdict",
+            classification="MED-C,MED-E,MED-D,MED-A,MED-B",
+            recommended_action="investigate",
+            reasoning="Prioritize ransomware and exfiltration indicators.",
+        )
 
-    # hard
-    return _make_action("H-01,H-03,H-05,H-07,H-11", "contain",
-                        "Matches recon to exfiltration kill-chain sequence.")
+    return _make_action(
+        tool_name="submit_verdict",
+        classification="H-01,H-03,H-05,H-07,H-11",
+        recommended_action="contain",
+        reasoning="Matches recon to exfiltration kill-chain sequence.",
+    )
+
+
+def _heuristic_action(obs: Any, step_index: int) -> Any:
+    if step_index == 0:
+        query = {
+            "easy": "failed login outbound beacon privilege",
+            "medium": "ransomware outbound data privilege",
+            "hard": "scan exploit shell lateral exfil",
+        }.get(getattr(obs, "task_id", "easy"), "suspicious")
+        return _make_action(
+            tool_name="query_siem",
+            tool_args={"query": query},
+            reasoning="Initial SIEM investigation sweep.",
+        )
+
+    if step_index == 1:
+        return _make_action(
+            tool_name="get_threat_intel",
+            tool_args={"ioc": _pick_ioc(obs)},
+            reasoning="Threat-intel enrichment for discovered IOC.",
+        )
+
+    if step_index == 2 and getattr(obs, "task_id", "") == "hard":
+        return _make_action(
+            tool_name="pivot_alert",
+            tool_args={"alert_id": _pick_alert_id(obs)},
+            reasoning="Pivot to correlate related timeline events.",
+        )
+
+    return _heuristic_verdict(obs)
 
 
 def _parse_action(text: str, fallback: Any) -> Any:
@@ -251,10 +340,12 @@ def _parse_action(text: str, fallback: Any) -> Any:
 
 
 def _model_action(client: Any, model_name: str, obs: Any) -> Any:
-    fallback = _heuristic_action(obs)
+    step_index = max(0, int(getattr(obs, "step_num", 0)))
+    fallback = _heuristic_action(obs, step_index=step_index)
     try:
         prompt = (
             f"Task id: {obs.task_id}\n"
+            f"Step: {getattr(obs, 'step_num', 0)}/{getattr(obs, 'max_steps', 1)}\n"
             f"Observation JSON:\n{json.dumps(obs.model_dump(), indent=2)}\n"
             "Return only JSON."
         )
@@ -295,7 +386,7 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
     try:
         obs = env.reset(task_id=task_id)
         done = False
-        max_steps = MAX_STEPS_MAP.get(task_id, 3)
+        max_steps = max(1, int(getattr(obs, "max_steps", MAX_STEPS_MAP.get(task_id, 4))))
 
         for step_num in range(1, max_steps + 1):
             if done:
@@ -307,16 +398,18 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
             error_msg: str | None = None
             try:
                 if client is None:
-                    action = _heuristic_action(obs)
+                    action = _heuristic_action(obs, step_index=step_num - 1)
                 else:
                     action = _model_action(client, model_name, obs)
             except Exception as exc:
                 error_msg = str(exc)
-                action = _heuristic_action(obs)
+                action = _heuristic_action(obs, step_index=step_num - 1)
 
             # Step environment
             try:
-                obs, reward, done, info = env.step(action)
+                obs = env.step(action)
+                reward = float(getattr(obs, "reward", 0.01) or 0.01)
+                done = bool(getattr(obs, "done", False))
             except Exception as exc:
                 error_msg = str(exc)
                 reward = 0.01
@@ -330,8 +423,7 @@ def run_task(task_id: str, client: Any | None, model_name: str, max_seconds: int
             if done:
                 break
 
-        # Final score = last reward (since env returns cumulative grading in reward per step)
-        score = max(0.01, min(0.99, sum(rewards)))
+        score = max(0.01, min(0.99, rewards[-1] if rewards else 0.01))
         success = score > 0.0
 
     except Exception as exc:
